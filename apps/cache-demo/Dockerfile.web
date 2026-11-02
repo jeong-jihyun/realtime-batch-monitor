@@ -1,6 +1,6 @@
 FROM node:20-alpine AS build
 WORKDIR /workspace
-COPY package.json package-lock.json* ./
+COPY package.json ./
 COPY apps/cache-demo/package.json apps/cache-demo/package.json
 RUN npm install
 COPY apps/cache-demo apps/cache-demo
