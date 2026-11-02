@@ -1,0 +1,26 @@
+import { useCallback, useEffect, useState } from 'react';
+import { io, type Socket } from 'socket.io-client';
+type Job={id:string;name:string;status:'queued'|'running'|'completed'|'failed';total:number;processed:number;createdAt:string};
+const API='http://localhost:3000';
+const JOBS='query Jobs { jobs { id name status total processed createdAt } }';
+const START='mutation StartBatch($total:Int!) { startBatch(total:$total) { id name status total processed createdAt } }';
+async function graphql<T>(query:string,variables?:Record<string,unknown>):Promise<T>{
+ const response=await fetch(`${API}/graphql`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query,variables})});
+ const body=await response.json();if(body.errors?.length)throw new Error(body.errors[0].message);return body.data as T;
+}
+export default function App(){
+ const [jobs,setJobs]=useState<Job[]>([]);const [connected,setConnected]=useState(false);const [loading,setLoading]=useState(false);const [error,setError]=useState('');const [total,setTotal]=useState(250);
+ const refresh=useCallback(async()=>{try{const data=await graphql<{jobs:Job[]}>(JOBS);setJobs(data.jobs);setError('');}catch{setError('백엔드에 연결할 수 없습니다. API 서버가 실행 중인지 확인하세요.');}},[]);
+ useEffect(()=>{const socket:Socket=io(API,{transports:['websocket','polling']});socket.on('connect',()=>setConnected(true));socket.on('disconnect',()=>setConnected(false));socket.on('batch:progress',(update:Job)=>setJobs(current=>current.some(j=>j.id===update.id)?current.map(j=>j.id===update.id?{...j,...update}:j):[update,...current].slice(0,50)));void refresh();return()=>{socket.disconnect();};},[refresh]);
+ const startBatch=async()=>{setLoading(true);setError('');try{await graphql<{startBatch:Job}>(START,{total});await refresh();}catch(e){setError(e instanceof Error?e.message:'배치 시작에 실패했습니다.');}finally{setLoading(false);}};
+ const running=jobs.filter(j=>j.status==='running').length;const completed=jobs.filter(j=>j.status==='completed').length;const processed=jobs.reduce((n,j)=>n+j.processed,0);const all=jobs.reduce((n,j)=>n+j.total,0);
+ return <main className="layout"><aside className="sidebar"><div className="brand"><b>ϟ</b><div><strong>Pulse</strong><small>BATCH CONTROL</small></div></div><p className="nav-label">WORKSPACE</p><div className="nav-active">▦　Overview <span>01</span></div><div className="side-bottom"><i className={connected?'online':'offline'}/>{connected?'Realtime connected':'Connecting to socket…'}<small>SOCKET.IO</small></div></aside>
+ <section className="main"><header className="topbar"><span><em>Workspace /</em> Overview</span><div><i className={connected?'online':'offline'}/>{connected?'LIVE':'OFFLINE'} <b className="avatar">RB</b></div></header><div className="content">
+ <div className="heading"><div><small className="eyebrow">MONITORING CENTER　•　V1.0</small><h1>Batch overview</h1><p>실시간 작업 진행 상황을 확인하고 배치를 실행하세요.</p></div><button className="primary" onClick={startBatch} disabled={loading}>{loading?'시작 중…':'＋ 배치 시작'}</button></div>
+ {error&&<div className="error">{error}</div>}
+ <div className="metrics"><Metric label="RUNNING JOBS" value={String(running).padStart(2,'0')} note="현재 처리 중" icon="◉"/><Metric label="COMPLETED JOBS" value={String(completed).padStart(2,'0')} note="완료된 작업" icon="✓"/><Metric label="ITEMS PROCESSED" value={processed.toLocaleString()} note={`전체 ${all.toLocaleString()}개 중`} icon="↗"/></div>
+ <section className="launch"><div><span className="bolt">ϟ</span><div><h2>새로운 배치 실행</h2><p>처리할 레코드 수를 선택하고 진행률을 확인하세요.</p></div></div><label>레코드 수 <select value={total} onChange={e=>setTotal(Number(e.target.value))}><option value={100}>100 records</option><option value={250}>250 records</option><option value={500}>500 records</option><option value={1000}>1,000 records</option><option value={5000}>5,000 records</option></select></label><button className="run" onClick={startBatch} disabled={loading}>{loading?'실행 중…':'Run batch →'}</button></section>
+ <section className="jobs"><div className="section-head"><div><h2>Processing jobs</h2><p>GraphQL 조회 + Socket.IO 실시간 이벤트</p></div><button className="refresh" onClick={()=>void refresh()}>↻ 새로고침</button></div><div className="table-scroll"><table><thead><tr><th>JOB</th><th>STATUS</th><th>PROGRESS</th><th>PROCESSED</th></tr></thead><tbody>{jobs.map(j=><tr key={j.id}><td><strong>{j.name}</strong><small className="job-id">#{j.id.slice(0,8)}</small></td><td><span className={`status s-${j.status}`}>{j.status}</span></td><td><div className="progress"><div><span style={{width:`${j.total?j.processed/j.total*100:0}%`}}/></div><small>{Math.round(j.total?j.processed/j.total*100:0)}%</small></div></td><td>{j.processed.toLocaleString()} <em>/ {j.total.toLocaleString()}</em></td></tr>)}{jobs.length===0&&<tr><td colSpan={4} className="empty">{error?'API 연결 후 작업 목록이 표시됩니다.':'아직 배치 작업이 없습니다. 새 배치를 실행해 보세요.'}</td></tr>}</tbody></table></div></section>
+ <footer><span>REALTIME BATCH MONITOR</span><span>GraphQL · TypeORM · Socket.IO</span></footer></div></section></main>;
+}
+function Metric({label,value,note,icon}:{label:string;value:string;note:string;icon:string}){return <article className="metric"><div>{label}<b>{icon}</b></div><strong>{value}</strong><small>{note}</small></article>}
